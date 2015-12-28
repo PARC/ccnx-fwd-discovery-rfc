@@ -1,0 +1,216 @@
+---
+title: CCNx End-host Forwarder Discovery
+abbrev: CCNx-discovery
+docname: draft-wood-icnrg-ccnxdiscovery
+date: 2015-10-14
+category: info
+
+ipr: trust200902
+area: General
+workgroup: ICNRG Working Group
+keyword: Internet-Draft
+
+stand_alone: yes
+pi: [toc, sortrefs, symrefs]
+
+author:
+ -
+    ins: I. Solis
+    name: Ignacio Solis
+    organization: PARC
+    email: ignacio.solis@parc.com
+ -
+    ins: C. A. Wood
+    name: Christopher A. Wood
+    org: PARC
+    email: christopher.wood@parc.com
+
+normative:
+    RFC1034:
+    RFC1035:
+    RFC2119:
+    RFC2181:
+    RFC2782:
+    RFC6762:
+    RFC6763:
+    RFC0768:
+    RFC0791:
+
+--- abstract
+
+This document describes how an end host forwarder discovers its first-hop CCNx
+forwarder over UDP.
+
+--- middle
+
+Introduction        {#problems}
+============
+
+CCNx networks will run over IP as an overlay to enable experimentation and
+interoperability. Virtual links between two forwarders in this overlay network
+will be UDP {{RFC0768}} links. Consequently, there needs to be a mechanism for
+an end host to discover the IP address {{RFC0791}} and UDP port number of its
+first-hop forwarder. There are several ways this can be done, including DNS-based
+service discovery and manually configuring forwarder addresses.
+There is no silver bullet; different network configurations may call for or require
+different techniques. In this document, we present two bootstrapping mechanisms
+for zero- and manual-configuration discovery of the first-hop forwarder.
+
+We assume forwarders are configured and connected to each other by some other means.
+Such connectivity is outside the scope of this document.
+
+##  Conventions and Terminology
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
+"SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this
+document are to be interpreted as described in RFC 2119 {{RFC2119}}.
+
+# Forwarder Discovery Requirements
+
+A necessary step for bootstrapping a CCNx end host connection is to discover the
+IP address and UDP port number of the appropriate first-hop forwarder. The resultant
+(IP address, UDP port) tuple is then used to create a virtual link to this forwarder.
+
+~~~
++---+  (Virtual link)   +---+
+| C +-------------------+ F |
++---+                   +---+
+~~~
+{: #basic-link title="A virtual link between a CCNx end host C and first-hop forwarder F."}
+
+These links are general, or virtual, in the sense that they connect any
+two CCNx-compliant endpoints over UDP. One endpoint of this link is a forwarder
+that supports the CCNx routing protocol and the other is the end host attempting
+to connect to the CCNx overlay network.
+Virtual links may traverse multiple IP routers, switches, and hubs between two
+endpoints (H1 and H2 in the example below, which
+are connected over multiple IP-compliant network elements).
+Note that, for the purposes of this document, we assume router connections and
+links are already configured by some other means.
+
+~~~
+                      +----+    +----+
+                  +---> N2 +----+ N3 +-+
+                  |   +----+    +----+ |
+           +----+ |                    | +----+
++-----+    |    +-+                    +-+    |    +----+   +-----+
+|  C  +----+ N1 |                        | N5 +----+ N6 +---+  F  |
++-----+    |    +---+              +-----+    |    +----+   +-----+
+           +----+   |    +----+    |     +----+
+                    +----+ N4 +----+
+                         +----+
+~~~
+{: #real-link title="An example of the physical topology of a link between a end host C and router F with multiple network nodes (routers, switches)."}
+
+# Discovery Mechanisms
+
+Forwarder discovery may be done automatically, i.e., with zero configuration, or
+manually. Zero-configuration is done via DNS-based discovery, of which there are
+three varieties: managed DNS {{RFC1034}} {{RFC1035}} {{RFC2181}}, mDNS {{RFC6762}},
+and DNS-SD {{RFC6763}}. Manual configuration is done via a stack or local configuration
+file, e.g., a hostname file. This section details these two flavors of discovery.
+
+## Zero configuration bootstrapping with DNS
+
+### Unicast DNS discovery {#sec-unicast}
+
+Standard managed (unicast) DNS is appropriate for discovery in networks where
+administrators can install DNS records. In this case, if a CCNx router R at a
+machine with the hostname ccnx.parc.com (operating within PARC) is to expose a
+forwarding service on UDP port 9695, then a DNS service record (SRV) {{RFC2782}}
+can be created with the following contents:
+
+~~~
+_ccnx._udp.linklocal. 86400 IN SRV 0 3 9596 ccnx.parc.com.
+~~~
+{: #srv title="CCNx DNS SRV structure."}
+
+Assuming properly-scoped DNS SRV and CNAME records exist for a CCNx forwarder,
+an end-host within the PARC network (using DHCP, with an IP address already configured)
+will perform the following steps to bootstrap a connection to said forwarder:
+
+1. Use DNS {{RFC6762}} to query for the service with the name _ccnx._udp.linklocal
+and retrieve the corresponding SRV record. Specifically, issue a query with
+the query type (qtype) SRV and use the result.
+
+2. Use DNS to query for the IP address (CNAME record) associated with the target name
+specified in the SRV record.
+
+### Multicast DNS discovery
+
+In cases where unicast DNS servers cannot be directly managed, multicast DNS (mDNS)
+may be used. Multicast DNS queries are the same as unicast DNS queries (except that
+SRV records are not supported). The record name must match the question type (qtype) unless
+the qtype is "ANY" or the record type is "CNAME" (see section 6 of {{RFC6762}}).
+
+mDNS queries for the CCNx forwarder are not continuous -- they are one-shot. A client
+will blindly issue DNS queries for the CCNx forwarder to the address 224.0.0.251
+at port 5353. The client will use the first response it receives. It is not
+necessary to wait for all responses (if there are more than one), since a client
+only needs to discover a single forwarder.
+
+Based on this information, the client discovery process using mDNS is:
+
+1. The client issues mDNS queries of type A (address) or CNAME (canonical name record)
+and uses the first result that is returned.
+2. The client uses the default forwarder port of 9596 to associate with the
+resultant IP address. This is because neither of the resultant records will contain
+port numbers.
+
+### DNS Service Discovery (SD)
+
+DNS-based service discovery (DNS-SD) is an extension of mDNS that supports SRV and TXT {{RFC1035}}.
+That is, DNS-SD can use unicast or multicast DNS queries for SRV and TXT records.
+Both record types will carry the same name for a given service. The SRV records
+will be created as in Section {{sec-unicast}}. TXT records will be constructed to
+provide additional information to accompany the associated SRV record. These TXT records
+contain key-value pairs for additional information. In our case, the TXT record will
+convey, at a minimum, the UDP port number.
+
+Clients use DNS-SD to discover the list of services offered in a particular domain.
+This is done by issuing a query for a DNS PTR {{RFC1035}} record with a name
+containing:
+
+- service=ccnx
+- domain=parc
+
+The resultant record will contain a (possibly empty) list of names that contain
+the SRV and TXT record names referred to above. The client then issues SRV and
+TXT queries for these records using unicast or multicast DNS. The resultant records
+contain the IP address(es) and UDP port(s) necessary to bootstrap a forwarder connection.
+
+## Manual configuration bootstrapping
+
+### Configuration file
+
+An end host can maintain a hostname file that contains (IP,port) tuples for several
+possible CCNx forwarders which can serve as gateways to the overlay network. The
+end host forwarder can sequentially parse this file and attempt to create a connection
+to the provided addresses until one succeeds. This hostname file can be configured
+and modified manually as users roam across different networks.
+
+### Fixed (IP,port) tuples
+
+(IP,port) tuples of fixed CCNx forwarders which can be used as gateways to a (the)
+CCNx overlay can be hard-coded into the end host forwarder software. This option
+hinders configuration and is difficult to maintain. It should be used as a default
+when automatic discovery is not possible and a host configuration file is not found.
+
+# Network Configuration Considerations
+
+Some of the aforementioned bootstrapping mechanisms may not be appropriate for
+all networks. For example, not all networks may allow custom DNS service records
+to be installed to enable mDNS-based discovery. Below we outline several common
+network setting problems and suggest the bootstrapping mechanisms that would be best
+suited to these environments where these are a reality.
+
+- Unable to install DNS service records: Use the manual discovery.
+- The network is partitioned: Use manual discovery.
+- Multicast messaging is disallowed or blocked: Use manual discovery.
+
+# Security Considerations
+
+DNS service records may be secured via DNSSEC. Manual configuration settings
+are only as secure as their weakest form of OS-level protection.
+
+--- back
